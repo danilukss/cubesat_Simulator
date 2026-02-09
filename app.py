@@ -1,160 +1,148 @@
-from flask import Flask, render_template_string, request
-import numpy as np
-import plotly.graph_objs as go
-from plotly.offline import plot
-import os
+from flask import Flask, render_template, jsonify
+import random
+import time
 
 app = Flask(__name__)
 
-# -------------------------
-# Симуляция CubeSat
-# -------------------------
-def simulate(angle0, algo="PID"):
-    dt = 0.01
-    T = 8
-    steps = int(T/dt)
-    I = 0.01
-    state = np.array([angle0, 0.0])
-    history = []
+state = {
+    "power": False,
+    "communication": False,
+    "payload": False
+}
 
-    if algo == "PID":
-        kp, ki, kd = 5, 0.1, 2
-        integral = 0
-        prev_error = 0
-    elif algo == "LQR":
-        K = np.array([5.0, 1.0])  # коэффициенты LQR
+history = {
+    "time": [],
+    "temperature": [],
+    "voltage": []
+}
 
-    for _ in range(steps):
-        error = -state[0]
-        if algo == "PID":
-            integral += error*dt
-            derivative = (error-prev_error)/dt
-            prev_error = error
-            torque = kp*error + ki*integral + kd*derivative
-        elif algo == "LQR":
-            torque = float(-K @ state)
-        else:
-            torque = 0
+def telemetry():
+    return {
+        "temperature": round(random.uniform(-20, 60), 1),
+        "voltage": round(random.uniform(3.6, 4.2), 2),
+        "light": round(random.uniform(0, 100), 1)
+    }
 
-        state[0] += state[1]*dt
-        state[1] += torque/I*dt
-        history.append(state[0])
+@app.route("/")
+def index():
+    return render_template("index.html", state=state)
 
-    return history
+@app.route("/mission")
+def mission():
+    return render_template("mission.html")
 
-# -------------------------
-# 3D куб CubeSat через Plotly
-# -------------------------
-def cube_3d(angle):
-    r = [-0.5,0.5]
-    X, Y = np.meshgrid(r,r)
-    Z = np.zeros_like(X)
-    c,s = np.cos(angle), np.sin(angle)
-    Xr = c*X - s*Y
-    Yr = s*X + c*Y
-    Zr = Z
-    data = [go.Surface(z=Zr, x=Xr, y=Yr, colorscale='Viridis', opacity=0.7)]
-    layout = go.Layout(scene=dict(
-        xaxis=dict(range=[-1,1]),
-        yaxis=dict(range=[-1,1]),
-        zaxis=dict(range=[-1,1])
-    ))
-    fig = go.Figure(data=data, layout=layout)
-    return plot(fig, output_type='div', include_plotlyjs=False)
+@app.route("/toggle/<name>")
+def toggle(name):
+    if name in state:
+        state[name] = not state[name]
+    return jsonify(state)
 
-# -------------------------
-# HTML шаблон с CSS
-# -------------------------
-HTML = """
+@app.route("/telemetry")
+def get_telemetry():
+    data = telemetry()
+
+    history["time"].append(time.strftime("%H:%M:%S"))
+    history["temperature"].append(data["temperature"])
+    history["voltage"].append(data["voltage"])
+
+    if len(history["time"]) > 10:
+        history["time"].pop(0)
+        history["temperature"].pop(0)
+        history["voltage"].pop(0)
+
+    response = {
+        "time": history["time"],
+        "temperature": history["temperature"],
+        "voltage": history["voltage"]
+    }
+
+    return jsonify(response)
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
+    
+    
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
 <meta charset="UTF-8">
-<title>CubeSat Simulator Pro</title>
-<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+<title>CubeSat Control</title>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
 <style>
-body {font-family: 'Arial', sans-serif; background-color: #0d1b2a; color: #e0e1dd; padding: 20px;}
-h1 {color:#fca311;}
-button {padding: 10px 20px; margin:5px; font-size:16px; cursor:pointer; border:none; border-radius:5px;}
-button:hover {opacity:0.8;}
-#pid {background-color:#f77f00; color:white;}
-#lqr {background-color:#219ebc; color:white;}
-#compare {background-color:#8ac926; color:white;}
-input[type=text]{padding:5px; width:80px;}
-a {color:#fca311; text-decoration:none; margin-left:10px;}
-a:hover {text-decoration:underline;}
+body { background:#0b1020; color:white; font-family:Arial; text-align:center; }
+.block { background:#1e2747; padding:15px; margin:10px; display:inline-block; width:200px; border-radius:12px; }
+.on { color:#00ff9c; }
+.off { color:#ff5c5c; }
+button { width:100%; padding:10px; margin-top:10px; border:none; border-radius:8px; background:#2563eb; color:white; }
+a { color:#7dd3fc; }
 </style>
 </head>
+
 <body>
-<h1>🛰 CubeSat Simulator Pro</h1>
-<p>Интерактивное моделирование системы ориентации CubeSat.</p>
 
-<form method="post">
-<label>Начальный угол (рад):</label><br>
-<input type="text" name="angle" value="0.5"><br><br>
+<h1>🛰 CubeSat Control Center</h1>
+<a href="/mission">➡ Mission page</a><br><br>
 
-<button type="submit" name="algo" value="PID" id="pid">Запустить PID</button>
-<button type="submit" name="algo" value="LQR" id="lqr">Запустить LQR</button>
-<button type="submit" name="algo" value="Compare" id="compare">Сравнить PID vs LQR</button>
-</form>
+<div class="block">
+🔋 Power<br>
+<span id="power" class="{{ 'on' if state.power else 'off' }}">{{ 'ON' if state.power else 'OFF' }}</span>
+<button onclick="toggle('power')">Toggle</button>
+</div>
 
-{% if plot_div %}
-<h2>График ориентации CubeSat</h2>
-{{ plot_div|safe }}
-{% endif %}
+<div class="block">
+📡 Communication<br>
+<span id="communication" class="{{ 'on' if state.communication else 'off' }}">{{ 'ON' if state.communication else 'OFF' }}</span>
+<button onclick="toggle('communication')">Toggle</button>
+</div>
 
-{% if cube_div %}
-<h2>3D CubeSat</h2>
-{{ cube_div|safe }}
-{% endif %}
+<div class="block">
+🧪 Payload<br>
+<span id="payload" class="{{ 'on' if state.payload else 'off' }}">{{ 'ON' if state.payload else 'OFF' }}</span>
+<button onclick="toggle('payload')">Toggle</button>
+</div>
 
-<p>Полезные ресурсы: 
-<a href="https://ru.wikipedia.org/wiki/CubeSat" target="_blank">CubeSat Wiki</a> | 
-<a href="https://www.nasa.gov/mission_pages/cubesats/main/index.html" target="_blank">NASA CubeSats</a>
-</p>
+<h2>📊 Telemetry</h2>
+<canvas id="chart" width="400"></canvas><br>
+<button onclick="update()">🔄 Update</button>
+
+<script>
+const ctx = document.getElementById('chart');
+const chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+        labels: [],
+        datasets: [
+            { label: 'Temperature °C', data: [], borderWidth: 2 },
+            { label: 'Voltage V', data: [], borderWidth: 2 }
+        ]
+    }
+});
+
+function toggle(name){
+    fetch('/toggle/' + name)
+    .then(r=>r.json())
+    .then(d=>{
+        for(let k in d){
+            let el=document.getElementById(k);
+            el.textContent=d[k]?'ON':'OFF';
+            el.className=d[k]?'on':'off';
+        }
+    });
+}
+
+function update(){
+    fetch('/telemetry')
+    .then(r=>r.json())
+    .then(d=>{
+        chart.data.labels = d.time;
+        chart.data.datasets[0].data = d.temperature;
+        chart.data.datasets[1].data = d.voltage;
+        chart.update();
+    });
+}
+</script>
+
 </body>
 </html>
-"""
-
-# -------------------------
-# Flask маршрут
-# -------------------------
-@app.route("/", methods=["GET","POST"])
-def index():
-    plot_div = None
-    cube_div = None
-    if request.method=="POST":
-        angle0 = request.form.get("angle","0.5").replace(",", ".")
-        try:
-            angle0 = float(angle0)
-        except ValueError:
-            angle0 = 0.5
-
-        algo = request.form.get("algo","PID")
-        if algo=="Compare":
-            pid_hist = simulate(angle0,"PID")
-            lqr_hist = simulate(angle0,"LQR")
-            t = np.arange(len(pid_hist))*0.01
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=t, y=pid_hist, mode='lines', name='PID'))
-            fig.add_trace(go.Scatter(x=t, y=lqr_hist, mode='lines', name='LQR'))
-            fig.update_layout(title='Сравнение PID vs LQR', xaxis_title='Время, с', yaxis_title='Угол, рад')
-            plot_div = plot(fig, output_type='div', include_plotlyjs=True)
-            cube_div = cube_3d(lqr_hist[-1])
-        else:
-            hist = simulate(angle0, algo)
-            t = np.arange(len(hist))*0.01
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=t, y=hist, mode='lines', name=algo))
-            fig.update_layout(title=f'Ориентация CubeSat ({algo})', xaxis_title='Время, с', yaxis_title='Угол, рад')
-            plot_div = plot(fig, output_type='div', include_plotlyjs=True)
-            cube_div = cube_3d(hist[-1])
-
-    return render_template_string(HTML, plot_div=plot_div, cube_div=cube_div)
-
-# -------------------------
-# Запуск на Render
-# -------------------------
-if __name__=="__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
