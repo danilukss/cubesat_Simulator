@@ -150,7 +150,7 @@ def mission():
 def toggle_state(name):
     if name in state:
         state[name] = not state[name]
-return jsonify(state)
+    return jsonify(state)
 
 @app.route("/telemetry")
 def telemetry():
@@ -170,5 +170,6 @@ def telemetry():
         "voltage": history["voltage"]
     })
 
-if name == "__main__":
+if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+    
